@@ -1,0 +1,307 @@
+---
+title: "HeLa Adaptability"
+author: "Richard R. Evans"
+date: "May 15, 2017"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+# Study Description
+
+From Adam Lauring:
+
+We examined the dynamics of adaptive evolution by passage of both wild type (WT) and 3D G64S virus populations on HeLa or PVR-3T3 cells. 
+
+Starting from the same stock of either WT or 3D G64S, we passed 5 replicate lineages of each virus for 20 passages (HeLa) or 12 passages (PVR-3T3). 
+
+We measured the fitness of the passage 0 stocks and every 4th and 5th passage of the evolved lineages for the HeLa experiment and PVR-3T3 experiments, respectively, by competition against a tagged WT reference in triplicate.
+
+For the HeLa experiment, then there are 5 replicate lineages, 4 time points per lineage (in addition to the starting passage 0 stock), and 3 replicate fitness measurements per lineage-time point. 
+
+For the PVR-3T3 experiment, then there are 5 replicate lineages, 3 time points per lineage (in addition to the starting passage 0 stock), and 3 replicate fitness measurements per lineage-time point.
+
+# Libraries
+
+```{r, library loading}
+library(tidyverse)
+library(magrittr)
+library(lme4)
+library(lmerTest)
+library(pander)
+library(reshape2)
+library(sjPlot)
+```
+
+# Load Data
+
+```{r}
+# setwd("~/Documents/R/hela_adaptability/")
+hela <- read.table(file = "HeLa_Adaptability_20.txt", header = TRUE)
+cell_3t3 <- read.table(file = "3T3_Adaptability_P12_05302017.txt", header = TRUE)
+```
+
+# Data Processing
+
+```{r}
+hela_clean <- hela %>%
+  select(-fitness) %>%
+  mutate(virus = factor(virus, levels = c(0, 1),
+                        labels = c("Virus 0"," Virus 1")),
+         repID = factor(repID, levels = 1:5,
+                        labels = paste(rep("repID:", 5), 1:5, sep = "")),
+         measID = factor(measID)) %>%
+  arrange(virus, time)
+
+cell3t3_clean <- cell_3t3 %>%
+  select(-fitness) %>%
+  mutate(virus = factor(virus, levels = c(0, 1),
+                        labels = c("Virus 0"," Virus 1")),
+         repID = factor(repID, levels = 1:5,
+                        labels = paste(rep("repID:", 5), 1:5, sep = "")),
+         measID = factor(measID)) %>%
+  arrange(virus, time)
+```
+
+## HeLa data preview
+
+```{r}
+head(tbl_df(hela_clean))
+```
+.
+
+.
+
+.
+```{r}
+tail(tbl_df(hela_clean))
+```
+
+## 3T3 Cell Preview
+
+```{r}
+head(tbl_df(cell3t3_clean))
+```
+
+# Data Exploration
+
+## HeLa Cells
+
+```{r}
+pander(sapply(hela_clean[,c(1:4)], table))
+```
+
+There are 119 $virus_{0}$ and 117 $virus_{1}$. The missing two are from missing values during lab testing, they have been removed from the analysis.
+
+Likewise, there are 3 time points missing from t=10 and 1 time point missing from t=20. Two time points are missing from $repID_{1}$ and $repID_{2}$. Two time points are missing from $measID_{1}$ and $measID_{3}$
+
+By replicate measure and virus type, the effect of measurement at time point 0 is always the same for a particular type of virus. I don't think the intercept matters at all in assessing virus 1 vs virus 0. This can be seen in the following plot.
+
+```{r}
+hela_clean %>%
+  filter(as.numeric(measID) <= 3) %>%
+  ggplot(aes(x = time, y = logfitness, color = measID)) %>%
+  add(geom_point(stat = "identity", position = "identity",
+                 alpha = 0.7, size = 3)) %>%
+  add(geom_smooth(method = "lm", formula = y ~ x, se = FALSE)) %>%
+  add(facet_wrap(~virus + repID, nrow = 2)) %>%
+  add(labs(x = "time",
+           y = "log(Fitness)")) %>%
+  add(theme_bw())
+
+hela_clean %>%
+  ggplot(aes(x = time, y = logfitness, color = measID)) %>%
+  add(geom_point(stat = "identity", position = "identity",
+                 alpha = 0.7, size = 3)) %>%
+  add(geom_smooth(method = "lm", formula = y ~ x, se = FALSE)) %>%
+  add(facet_wrap(~virus + repID, nrow = 2)) %>%
+  add(labs(x = "time",
+           y = "log(Fitness)")) %>%
+  add(theme_bw())
+```
+
+Without t = 0
+
+```{r}
+hela_clean %>%
+  filter(as.numeric(measID) <= 3 & time != 0) %>%
+  ggplot(aes(x = time, y = logfitness, color = measID)) %>%
+  add(geom_point(stat = "identity", position = "identity",
+                 alpha = 0.7, size = 3)) %>%
+  add(geom_smooth(method = "lm", formula = y ~ x, se = FALSE)) %>%
+  add(facet_wrap(~virus + repID, nrow = 2)) %>%
+  add(labs(x = "time",
+           y = "log(Fitness)")) %>%
+  add(theme_bw())
+```
+
+## 3T3 Cells
+
+```{r}
+pander(sapply(cell3t3_clean[,c(1:4)], table))
+```
+
+```{r}
+cell3t3_clean %>%
+  filter(as.numeric(measID) <= 3) %>%
+  ggplot(aes(x = time, y = logfitness, color = measID)) %>%
+  add(geom_point(stat = "identity", position = "identity",
+                 alpha = 0.7, size = 3)) %>%
+  add(geom_smooth(method = "lm", formula = y ~ x, se = FALSE)) %>%
+  add(facet_wrap(~virus + repID, nrow = 2)) %>%
+  add(labs(x = "time",
+           y = "log(Fitness)")) %>%
+  add(theme_bw())
+```
+
+# Models
+
+## Naive Model (HeLa Cell)
+```{r}
+naive.mod <- glm(logfitness ~ virus + time + virus * time,
+                 data = hela_clean)
+
+summary(naive.mod)
+```
+
+This is a very silly model. There is no nesting involved and clearly a lot of duplicated values. This would severely reduce our standard errors and that is why you see very small p-values.
+
+```{r}
+naive.mod <- glm(logfitness ~ virus + time + virus * time,
+                 data = distinct(hela_clean, virus, time, logfitness))
+
+summary(naive.mod)
+```
+
+This version, with distinct values of logfitness, time, and virus is not really a good idea either but it would reflect the actual experiment while ignoring the hierarchical structure of the experiment.
+
+## Hierarchical Models
+
+### HeLa Cell
+
+#### Frequentist
+
+This is a three-level model with time nested within measID nested within repID.
+
+```{r}
+mod.1 <- lmer(logfitness ~ virus * time + (time|measID/repID),
+              data = hela_clean,
+              REML = FALSE)
+
+summary(mod.1)
+# plot(mod.1)
+```
+
+For comparison we will run a model without the measID/repID to include only an interaction between measID:repID and a main effect for measID. The former reduces to `virus + time + virus * time + (time|measID) + (time|repID) + (time|measID) * (time|repID)`.
+
+```{r}
+mod.2 <- lmer(logfitness ~ virus * time + (time|repID:measID),
+              data = hela_clean,
+              REML = FALSE)
+
+summary(mod.2)
+
+anova(mod.1, mod.2)
+```
+
+There is essentially no difference between the two. To simplify you could take mod.2.
+
+Plotting frequentist mixed models can be dubious. You can use the visreg package but it shouldn't be trusted for inference since you can't easily estimate a standard error from predictions (fuzzy p-values again.)
+
+```{r}
+visreg::visreg(mod.1, "time", by = "virus", overlay = TRUE)
+visreg::visreg(mod.1, "repID", by = "virus")
+visreg::visreg(mod.1, "measID", by = "virus")
+```
+
+Measure ID looks very strange because of the 12 measurements at t = 0 causing imbalance.
+
+You can see this more easily in the new sjPlot package:
+
+```{r}
+sjp.lmer(mod.1)
+```
+
+These are the BLUPs, the "Best Linear Unbiased Predictors" for every level of the random effects. at any of the $measID = \{1, 2, 3\}$ you can see the predictons vary, however at every value of $measID = \{4, ..., 12\}$ they are almost identical.
+
+```{r}
+sjp.lmer(mod.1, type = "fe", sort = TRUE)
+```
+
+The virus by time interaction is really only marginally significant but that is mostly due to the differing intercept.
+
+```{r}
+sjp.lmer(mod.1, type = "rs.ri", 
+         vars = "virus", sample.n = 12, show.legend = TRUE)
+```
+These are the random slopes for time by measure ID, where they basically don't vary for measID 4:12 but do vary for 1:3, sort of.
+```{r}
+sjp.lmer(mod.1, type = "rs.ri", 
+         vars = "virus", sample.n = c(1,2,3), show.legend = TRUE)
+```
+
+#### Bayesian
+
+I ran the following MCMC model and then saved it for markdown rendering purposes. I use BRMS here for ease of use, if you want to try it yourself it may take some time to set-up. First you must install Rtools, then STAN and then brms. It's a process.
+
+```{r}
+library(brms)
+# brm.1 <- brm(logfitness ~ virus * time + (time|measID/repID),
+#              data = hela_clean)
+# 
+# saveRDS(brm.1, file = "~/Documents/R/hela_adaptability/brm.rds")
+brm.1 <- readRDS(file = "brm.rds")
+
+summary(brm.1)
+plot(brm.1)
+marginal_effects(brm.1)
+```
+
+Bayesian modelling of the same experiment arrives at a very similar conclusion, namely there is a difference between virus 1 and virus 2 over time but only in starting point, they exhibit the same growth patterns (slopes).
+
+### 3T3 Cell
+
+#### Frequentist
+
+This is a three-level model with time nested within measID nested within repID.
+
+```{r}
+mod.1 <- lmer(logfitness ~ virus * time + (time|measID/repID),
+              data = cell3t3_clean,
+              REML = FALSE)
+
+summary(mod.1)
+# plot(mod.1)
+```
+
+```{r}
+visreg::visreg(mod.1, "time", by = "virus", overlay = TRUE)
+visreg::visreg(mod.1, "repID", by = "virus")
+visreg::visreg(mod.1, "measID", by = "virus")
+```
+
+#### Bayesian
+
+```{r}
+# brm.3t3 <- brm(logfitness ~ virus * time + (time|measID/repID),
+#                data = cell3t3_clean)
+# 
+# saveRDS(brm.3t3, file = "~/Documents/R/hela_adaptability/brm_3t3.rds")
+brm.3t3 <- readRDS(file = "brm_3t3.rds")
+
+summary(brm.3t3)
+plot(brm.3t3)
+marginal_effects(brm.3t3)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

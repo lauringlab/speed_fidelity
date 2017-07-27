@@ -1,0 +1,314 @@
+---
+title: "Estimating the within host bottleneck of polio virus"
+output: github_document
+---
+
+
+We are interested in estimating the effective bottleneck that restricts polio populations between intramuscular infection and entry into the brain. We will use data provided in 	Pfeiffer JK and Kirkegaard K. 2006  and a simple probabilistic model to estimate this bottleneck. Pfiffer and Kirkegaard infected 27 mice with $2\times10^7$ PFU of polio virus (2-5 fold higher than the LD50). This population was tagged with 4 neutral bar codes present in equal concentrations. In separate experiments the authors showed that all 4 bar codes were present at the site of infection and that all four bar codes were capable of replicating simultaneously in the brain. However, rarely were all 4 bar codes present in the brain following infection suggesting the populations were subject to within host bottlenecks. Similar results were observed for IV and IP routes of infection. In fact IM appears to be the least stringent mode of infection.
+
+To estimate the bottleneck between the site of infection and the brain, we modeled this bottleneck as a random sampling event. This assumption was justified as : 1) There is no evidence that a "jackpot" mutation is needed to enter the central nervous system. 2) The bar codes were been shown to be neutral. 3) The mice data show that all bar codes were equally likely to be present in the brain. We  assumed that bottlenecks are distrubuted according to a zero truncated Poisson distrubution. This allowed slight variation between  each mouse but required the bottleneck be greater than 0 in all cases. We then usedmaximum likelihood optimization to estimate the average within host bottleneck size.
+
+```{r,echo=F,message=F,warning=FALSE}
+require(plyr)
+require(reshape2)
+require(knitr)
+require(ggplot2)
+set.seed(42)
+opts_chunk$set(echo=F,message=F,warning=F,fig_align="center",tidy = T,cache=T)
+theme_set(new = theme_classic()+ theme(
+axis.line.x = element_line(colour = 'black', size=0.5, linetype='solid'),
+axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'))) # to make nice plots
+```
+
+```{r}
+ #This function returns n draws of size s, from a collection of max colors where each is present at equal concentrations.
+draws<-function(n,s,max){ 
+  out<-matrix(nrow=n,ncol=s+2) # allocating the memory for the output
+  for (i in 1:n){ # for each draw
+    colors<-floor(runif(s,1,max+1)) # randomly pick s integers (colors) 
+    num.unique<-length(unique(colors)) # find the number of unique "colors"
+    out[i,]<-c(i,colors,num.unique) # add the draw number followed by the colors to the output
+  }
+  out<-as.data.frame(out) 
+  names(out)[1]<-"draw" # fix the column names of the data frame
+  names(out)[length(names(out))]<-"unique.colors"
+  return(out)
+}
+
+# This function simulates 
+pick<-function(n,s,max){ # number of draws in experiment, size of the bottleneck, number of barcodes in the input.
+  colors<-draws(n,s,max)
+  counts<-c()
+  for (i in 1:max){ # now we'll count
+    counts[i]<-length(which(colors$unique.colors==i))
+  }
+ # print(counts)
+  out<-data.frame(handful=rep(x=s,times=max),barcodes=1:max,occurances=counts)
+  return(out)
+}
+
+expected<-data.frame(handful="expected",barcodes=1:4,occurances=c(9,10,7,1))
+simulated<-data.frame(handful=c(),barcodes=c(),occurances=c())
+for(i in 1:4){
+  
+  for(j in 1:100){
+    x<-pick(27,s = i,max = 4)
+    simulated<-rbind(x,simulated)
+  }
+}  
+#require(plotly)
+distributions<-ggplot(simulated,aes(x=as.factor(barcodes),y=occurances,color=as.factor(handful)))+geom_point()+geom_jitter()+geom_point(data=expected,aes(x=as.factor(barcodes),y=occurances),color="black")
+#ggplotly(distributions)
+#distributions+xlab("Colors present in the handful")+ylab("Number of handfuls")+scale_color_brewer(name="Handful size",type = 'qual')
+```
+
+
+```{r}
+# from https://stat.ethz.ch/pipermail/r-help/2005-May/070683.html
+
+rtpois<-function(N,lambda){
+  qpois(runif(N,dpois(0,lambda),1),lambda)
+}
+
+draws_rtpois<-function(n,max,lambda){ # This function returns n draws of size s, from a collection of max colors where each is present at equal concentrations.
+  s=rtpois(n,lambda) #size of draw
+  out<-matrix(nrow=n,ncol=3)
+  for (i in 1:n){
+    colors<-floor(runif(s[i],1,max+1))
+    num.unique<-length(unique(colors))
+    out[i,]<-c(i,s[i],num.unique) # add the draw number followed by the colors
+  }
+  out<-as.data.frame(out)
+  names(out)<-c("draw","size","unique.colors")
+  return(out)
+}
+
+pick_dist<-function(n,max,lambda,sims){ # #of draws in experiment,size of the bottleneck,number of barcodes inputted.
+  out<-data.frame(simulation=c(),barcodes=c(),occurances=c())
+  for(i in 1:sims){
+    picks<-draws_rtpois(n,max,lambda)
+    counts<-c()
+    for (j in 1:max){ # now we'll count
+    counts[j]<-length(which(picks$unique.colors==j))
+    }
+   # print(counts)
+    out<-rbind(out,data.frame(simulation=rep(x=i,times=max),barcodes=1:max,occurances=counts))
+  }
+  
+  return(out)
+}
+
+
+big_data<-data.frame(simulation=c(),mean=c(),barcodes=c(),occurances=c()) 
+
+for(i in 1:4){
+  x<-pick_dist(27,4,i,100)
+  x<-cbind(x,data.frame(mean=rep(i,times=4*100)))
+  big_data<-rbind(big_data,x)
+}
+
+
+
+distributions<-ggplot(big_data,aes(x=as.factor(barcodes),y=occurances,color=as.factor(mean)))+geom_point()+geom_jitter()+geom_point(data=expected,aes(x=as.factor(barcodes),y=occurances),color="black")
+#ggplotly(distributions)
+#distributions+xlab("Colors present in the handful")+ylab("Number of handfuls")+scale_color_brewer(name="Average Handful size",type = 'qual',direction = -1 )
+```
+
+The probability of a sample size of $n$ containing $K$ unique types given there are $N$ total unique types available (all present at equal frequency) is given by 
+
+\[
+P(K|N,n)={N \choose k}\bigg( \frac{k}{N}\bigg)^n 
+\Bigg[ 1-\sum_{i=1}^{k-1}{k \choose i}\bigg(  \frac{k-i}{k} \bigg)^n(-1)^{i+1}  \Bigg]
+\]
+
+1.	Ross SM. 2010. A First Course in Probability. Prentice Hall. Pages 121-122
+
+
+We are interested in the probability a subset of size $n$ containing 1,2,3, or 4 barcodes ($K$) given 4 possible barcodes ($N$). In this case $n$ represents the bottleneck size and in our model follows a zero truncated Poisson distribution. The likelihood of observing $k$ barcodes given $\lambda$ is 
+
+
+\[
+L(\lambda)=P(K|\lambda) = \sum_{n}P(K|N,n)P(n|\lambda)
+\]
+
+Where $P(k|N,n)$ is our expression above and $P(n|\lambda) = \frac{\lambda ^n}{(e^{n}-1)n!}$ or the probability of getting $n$ out of zero truncated Poisson with a parameter $\lambda$.  We approximated the infinite sum above with a partial sum of the first 100 terms as we expected a small bottleneck, and the probability of an $n$ of 50 with $\lambda=100$ is on the order of $10^{-10}$ and negligible.
+
+We then searched for the $\lambda$ that maximizesdthe sum of the log of this likelihood, which was calculated for each mouse.
+
+```{r,echo=F}
+p_dnk<-function(n,N,k,log=F){ # n= number of marbles N=possibe colors k=# of colors in n draws
+  #The sum term is the trickiest. here it is
+  #i<-1:k-1
+  I<-c()
+  for (i in 1:k-1){
+    I[i]<-choose(k,i)*(((k-i)/k)^n)*(-1)^(i+1)
+  }
+  B_A<-1-sum(I)
+  A=(k/N)^n
+  
+  x<-choose(N,k)*A*B_A
+  return(x)
+}
+p_dnk.v<-Vectorize(p_dnk,vectorize.args = 'k')
+
+
+## Now for practice let's try and fit the data. We know p-dnk gives the probability of seeing $k$ colors given $n$ draws. We'll try and fit $n$.
+require(bbmle)
+ k=c(rep(1,9),rep(2,10),rep(3,7),rep(4,1)) # this is what we saw.
+dzpois<-function(n,lambda){
+  lambda^n/((exp(lambda)-1)*factorial(n))
+}
+dzpois.v<-Vectorize(dzpois)
+
+k=c(rep(1,9),rep(2,10),rep(3,7),rep(4,1)) # this is what we saw.
+
+p_dnk.v<-Vectorize(p_dnk,vectorize.args = "n")
+
+llpnk_comp<-function(N,k,lambda,FUN){ # k is a vector
+  like<-c()
+  for(i in 1:length(k)){
+    n=1:100
+    like[i]<-sum(p_dnk.v(n = n,N=N,k[i])*FUN(n,lambda)) # Verify that this is how you would do it. It is
+  
+  }
+  -sum(log(like,10))
+}  
+
+
+ll<-c()
+i=1
+for(n in seq(0.1,10,by=0.1)){
+  ll[i]<-llpnk_comp(4,k,n,dzpois.v)
+  i<-i+1
+}
+out<-data.frame(LL=ll,n=seq(0.1,10,by=0.1))
+
+ggplot(out,aes(x=n/(1-exp(-n)),y=-ll))+geom_point()+xlab("Average bottle neck")+ylab("Log Likelihood")
+m2<-mle2(minuslogl = llpnk_comp,start = list(lambda=3),data=list(N=4,k=k,FUN=dzpois.v))#,lower=1,upper=50)
+
+
+m2
+
+p2<-profile(m2)
+#plot(p2)
+fits<-confint(p2)
+fits
+size=0:10
+fit_data<-data.frame(size=0:10,best=dzpois.v(size,m2@coef),"2.5%"=dzpois.v(size,fits[1]),"97.5%"=dzpois.v(size,fits[2]))
+
+fit_data.l<-melt(fit_data,id.vars = "size")
+fit_data.l$fit<-fit_data.l$variable
+#ggplot(fit_data.l,aes(x=size,y=value,fill=fit))+xlab("size of bottleneck")+ylab("probability")+geom_bar(stat="identity",position="dodge")
+```
+
+We found that a $\lambda$ of 2.44 with a 95% confidence interval of (1.39 - 3.82) best fits the data. This corresponds to a mean bottleneck of `r round(2.44/(1-exp(-2.44)),2)`
+
+To test the fit we will run 10,000 simulations. Each simulation includes 27 mice and each mouse has bottleneck size drawn from a zero-truncated Poisson with an $\lambda$ of 2.43. For illustration we will also simulate the data with an average bottleneck of 10.
+
+Here we have plotted the output of the simulations. The shaded regions represent the area occupied by 95% of the simulations with the dark regions representing the interquantile range of the simulations.
+
+```{r}
+
+means<-c(m2@coef,10)
+compare_means<-data.frame(low.50=c(),high.50=c(),mean=c())
+big_data<-vector("list",length(means))
+for(i in 1:length(means)){
+  #print(paste0("running with mean :",means[i]))
+  x<-pick_dist(27,4,means[i],10000)
+  big_data[[i]]<-x
+  expected.n<-data.frame(barcodes=1:4,occurances=count(k)$freq)
+  
+  area<-ddply(big_data[[i]],~barcodes,summarize,low.95=quantile(occurances,na.rm=T,probs=0.025),high.95=quantile(occurances,na.rm=T,probs=0.975),low.50=quantile(occurances,na.rm=T,probs=0.25),high.50=quantile(occurances,na.rm=T,probs=0.75)) 
+  
+  area$mean<-means[i]
+  compare_means<-rbind(compare_means,area)
+}
+
+distributions<-ggplot()+geom_ribbon(data=compare_means,aes(x=barcodes,ymin=low.50,ymax=high.50,group=mean,fill=as.factor(mean)),alpha=0.8)+geom_ribbon(data=compare_means,aes(x=barcodes,ymin=low.95,ymax=high.95,group=mean,fill=as.factor(mean)),alpha=0.4)+geom_point(data=expected.n,aes(x=barcodes,y=occurances),color="black")+geom_line(data=expected.n,aes(x=barcodes,y=occurances),color="black")+scale_fill_manual(name="Lambda",breaks=means,labels=c("2.44","10.0"),values=c("blue","darkmagenta"))
+distributions+xlab("Barcodes")+ylab("Mice")
+```
+
+We can see that our model fits the data very well.
+
+
+We can also check the fit by asking how often do we see the exact same output as the data in our simulations. For example how often do we see 9 mice with 1 bar code, 10 with 2, 7 with 3 and 1 with 4. 
+
+```{r,checking_fit_functions}
+data_fit<-function(simulation,experiment_pattern="9-10-7-1"){
+  lines<-dcast(simulation,simulation~barcodes,value.var = "occurances")
+  names(lines)<-c("simulation","b1","b2","b3","b4")
+  
+  lines<-mutate(lines,pattern=paste(b1,b2,b3,b4,sep="-"))
+  total<-dim(lines)[1]
+  
+  line_freqs<-ddply(lines,~pattern,function(x) data.frame(freq=(dim(x)[1])/total))
+  
+  lines<-join(line_freqs,lines)
+  
+  lines_unique<-ddply(lines,~pattern,function(x)data.frame(x[1,]))
+  
+  lines_unique.l<-melt(lines_unique,id.vars=c("simulation","pattern","freq"))
+  
+  lines_unique.l<-mutate(lines_unique.l,barcodes=gsub("b(\\d)",replacement = "\\1",x = variable),occurances=value)
+  
+  lines_unique.l<-lines_unique.l[order(-lines_unique.l$freq),]
+  
+  line_plot<-ggplot()
+  line_plot<-line_plot+geom_line(data=lines_unique.l,aes(x=barcodes,y=occurances,group=pattern,color=freq*total))+geom_point(data=expected.n,aes(x=barcodes,y=occurances),color="red")+geom_line(data=expected.n,aes(x=barcodes,y=occurances),color="red")+xlab("Barcodes present")+ylab("Mice")+scale_color_continuous(name="Occurances (n=10,000)")
+  
+  print(line_plot)
+  
+  exp.data<-subset(lines_unique,pattern==experiment_pattern)
+  #print(exp.data)
+  pats<-lines_unique$pattern[order(-lines_unique$freq)]
+  freqs<-data.frame(freqs=lines_unique$freq[order(-lines_unique$freq)])
+  
+  
+  freqs$cumulative<-NA
+  freqs$cumulative[1]<-freqs$freqs[1]
+  for(i in 2:length(freqs$freqs)){
+    freqs$cumulative[i]<-freqs$cumulative[i-1]+freqs$freqs[i]
+  }
+  
+  ranks<-ddply(freqs,~freqs,function(x) data.frame(rank= min(which(freqs$freqs==x$freqs[1])), cumulative=max(freqs$cumulative[freqs$freqs==x$freqs[1]])))
+  exp.rank<-subset(ranks,freqs==exp.data$freq)
+  
+  
+  # Plot cumulative curve for unique answers
+  plot(freqs$cumulative,xaxs="i",yaxs="i",xlab="Unique result (ranked)",ylab="Cumulative frequency")
+  segments(x0 = 0,y0 = min(freqs$cumulative[freqs$cumulative>0.5]),x1 = which(freqs$cumulative==min(freqs$cumulative[freqs$cumulative>0.5])),y1 = min(freqs$cumulative[freqs$cumulative>0.5]),col='blue')
+  # Where we get 50% of the unique answers
+#  segments(x0 = which(freqs$cumulative==min(freqs$cumulative[freqs$cumulative>0.5])),y0 = 0,x1 = which(freqs$cumulative==min(freqs$cumulative[freqs$cumulative>0.5])),y1 = min(freqs$cumulative[freqs$cumulative>0.5]),col='blue')
+  #segments(x0 = 0,y0 = min(freqs$cumulative[freqs$cumulative>0.5]),x1 = which(freqs$cumulative==min(freqs$cumulative[freqs$cumulative>0.5])),y1 = min(freqs$cumulative[freqs$cumulative>0.5]),col='blue')
+  segments(x0 = which(freqs$cumulative==min(freqs$cumulative[freqs$cumulative>0.5])),y0 = 0,x1 = which(freqs$cumulative==min(freqs$cumulative[freqs$cumulative>0.5])),y1 = min(freqs$cumulative[freqs$cumulative>0.5]),col='blue')
+  # Add where the experimental solution falls
+  if(length(exp.rank$cumulative>0)){
+  segments(x0 = 0,y0 = exp.rank$cumulative,x1 = exp.rank$rank,y1 = exp.rank$cumulative,col='red')
+  segments(x0 = exp.rank$rank,y0 = 0,x1 = exp.rank$rank,y1 = exp.rank$cumulative,'red')
+  }else{
+   # print("The experimental data did not occur in the simulations")
+  }
+  
+  #print(exp.rank)
+}
+
+```
+
+
+```{r}
+data_fit(simulation = big_data[[1]])
+```
+
+Here we rank the possible outcomes in order of frequency of occurance and plot the cumulative frequency on the y axis. The blue line signifiest the top 50% most frequent outcomes. The red line signifies the particular outcome observed in the mouse experiment. This outcome is in the top 10% most frequently simulated outcomes.  If the experiment was repeated with 27 mice again we would not necessisarily not  the exact same result, but we would expect the results to be similar. The graphs above show that similar results are the most likely outcomes of the model.
+
+# Mean bottleneck = 10
+
+We do not replicate the data once in 10,000 simulation if we have an $\lambda$ bottleneck of 10.
+
+```{r}
+data_fit(simulation = big_data[[2]])
+
+```
+
+
+
